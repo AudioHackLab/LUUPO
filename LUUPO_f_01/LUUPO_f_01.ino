@@ -19,12 +19,11 @@ SFEMP3Shield MP3player;
 
 const int buttons = A0;  //pin where is attacced the 4oe play's button
 const int bankb = A1;
-const int bank2 = 16;
 const int timePin = A2;
 const int modePot = A4;
 const int offsetBtn = A3;
 const int erasePin = 19;
-const int nstepp = 8;//16;
+int nstep = 0;//16;
 unsigned long tempo;
 
 int laststate[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -46,11 +45,11 @@ int dtime = 0;
 void setup() {
   result; //result code from some function as to be tested at later time.
   Serial.begin(115200);
-  
+
   //Initialize the SdCard.
   if (!sd.begin(SD_SEL, SPI_HALF_SPEED)) sd.initErrorHalt();
   if (!sd.chdir("/")) sd.errorHalt("sd.chdir");
-  
+
   //Initialize the MP3 Player Shield
   result = MP3player.begin();
   //check result, see readme for error codes.
@@ -62,52 +61,51 @@ void setup() {
       Serial.println(F("Warning: patch file not found, skipping.")); // can be removed for space, if needed.
     }
   }
-pinMode(erasePin,INPUT);
+  pinMode(erasePin, INPUT);
 }
 
 void loop() {
-  if (stepp >= nstepp) stepp = 0;
+  nstep = ((1023-analogRead(modePot)) /511)*8; //decite the number of step:0-8-16
+  
+  if (stepp >= nstep) stepp = 0;//
 
-  laststate[stepp] = 0;
+  laststate[stepp] = 0;   //to avoid that the track play when you press and in the moment which the stepp start
 
-  int lastbank = banks[stepp];
-  int bank = analogRead(bankb) / 256; //se 0 legge il campione se 1 legge il bank
-  int butt = readButtons(analogRead(buttons));//legge quale dei 4 bottoni sono stati premuti
+  int bank = analogRead(bankb)>>8; //decide which bank is available
+  int butt = readButtons(analogRead(buttons));//read the 4 buttons and store it in butt
 
-  int lastoffset = offset;
-  offset = 4 * analogRead(offsetBtn);
-  if (offset > lastoffset + 20 || offset < lastoffset - 20) offsets[stepp] = offset - 40;
-  if (offset <= 40) offsets[stepp] = 0;
+  int lastoffset = offset;//is to avoid to record the offset if yuo leave the pot in the same position
+  offset = 4 * analogRead(offsetBtn);  // read the offset
+  if (offset > lastoffset + 20 || offset < lastoffset - 20) offsets[stepp] = offset - 40;  //write the offset in the array
+  if (offset <= 40) offsets[stepp] = 0;  //to reset the offset of the step
 
-  if (analogRead(modePot) > 500) {
-    if (butt < 100) {
-
-      sequencer[stepp] = butt;
-      banks[stepp] = bank;
-      printstuff(banks[stepp], sequencer[stepp], offset);
-      playT (sequencer[stepp] + banks[stepp] * 4, offsets[stepp] );
-      laststate[stepp] = 1;
+  if (nstep!=0) {//enter here if the nstep si more then 0
+    //*****************************************SEQUENCER MODE******************************************************
+    Serial.println("sequencer");
+    if (butt < 100) {  //if a button is pressed
+      sequencer[stepp] = butt;  //store the button pressed
+      banks[stepp] = bank;      //store the bank chosed
+      printstuff(banks[stepp], sequencer[stepp], offset); //just printing someting
+      playT (sequencer[stepp] + banks[stepp] * 4, offsets[stepp] );  //play the track of the bank with the offset
+      laststate[stepp] = 1;  //to avoid to play also when the sequencer normaly play
     }
-    else {
-      //laststate[butt + bank] = 0;
-    }
 
-    if (digitalRead(erasePin)) {
-      Serial.print("erase");
-      sequencer[stepp] = 100;
+    if (digitalRead(erasePin)) {//to erase the bank and track of this step
+      sequencer[stepp] = 103;
       banks[stepp] = 0;
     }
-    
-    if (sequencer[stepp] < 100 && laststate[stepp] == 0 ) {
+
+    if (sequencer[stepp] < 100 && laststate[stepp] == 0 ) {  //playing the normaly sequencer 
+      Serial.println("playing");
       playT (sequencer[stepp] + banks[stepp] * 4, offsets[stepp] );
-      Serial.print(" <--playing ");
-      laststate[stepp] = 0;
+      laststate[stepp] = 0;  
     }
     Serial.print(" \n ");
     //delay(analogRead(timePin));
   }
 
-  else {
+  else {//enter here if the nstep is 0
+    //***********************************FREE MODE***************************************
     if (butt < 100) {
       printstuff(bank, butt, offset);
       playT ((bank * 4) + butt , offset );
@@ -115,14 +113,22 @@ void loop() {
     else {
       //laststate[butt + bank] = 0;
     }
+    if (digitalRead(erasePin)) {  //if you erase when you are not in the sequencer mode you erase the whole pattern
+      for (int u = 0; u < nstep; u++) {
+        sequencer[stepp] = 103;
+        banks[stepp] = 0;
+        offsets[stepp] = 0;
+      }
+    }
   }
-  unsigned long taim=( long((1023-analogRead(timePin))/14)*long((1023-analogRead(timePin))/14));
-  Serial.println(taim);
-  for (unsigned long d = 0; d < (long(5)+taim); d++){
+  unsigned long taim = ( long((1023 - analogRead(timePin)) / 14) * long((1023 - analogRead(timePin)) / 14));//the time of reproducing
+  //Serial.println(taim);
+  for (unsigned long d = 0; d < (long(5) + taim); d++) { // to have time from few ms to more then a second whit a precision of 100us
     delayMicroseconds(100);
   }
-  Serial.print(millis()-tempo);
-  tempo=millis();
+  //Serial.print(millis() - tempo);
+  Serial.print(" \n ");
+  tempo = millis();
   stepp++;
 }
 
@@ -131,37 +137,31 @@ void playT (int h, int offs) {
   if (MP3player.isPlaying()) {
     MP3player.stopTrack();
   }
-  //uint8_t result = MP3player.playMP3(filename[h]);
-  //uint8_t result;
   result = MP3player.playMP3(filename[h], offs);
 
 }
 
 
-int readBank(int first, int seconD) {
-  return first + (seconD << 1);
-}
-
 
 byte readButtons(int bUtt) {
   byte i ;
-  if (bUtt > 500) {
+  if (bUtt > 400) {
     i = 0;
     return i;
   }
-  if (bUtt > 100 && bUtt < 250) {
+  if (bUtt > 70 && bUtt < 130) {
     i = 1;
     return i;
   }
-  if (bUtt < 350 && bUtt >= 250) {
+  if (bUtt < 210 && bUtt >= 130) {
     i = 2;
     return i;
   }
-  if (bUtt < 500 && bUtt >= 350) {
+  if (bUtt < 400 && bUtt >= 210) {
     i = 3;
     return i;
   }
-  if (bUtt <= 100) {
+  if (bUtt <= 70) {
     i = 100;
     return i;
   }
